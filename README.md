@@ -29,3 +29,16 @@ The ML detector fixtures return deterministic scores. The course repository sepa
 The previous AI gateway grader and fixtures remain under `internal` to preserve the existing uncommitted work during this conversion. They are historical and are not selected by the active tester entry point or `make test`. Their former stage Make targets have been removed. Cleanup of those files can follow the coordinated migration commit.
 
 The published v1 tester predates this inbound curriculum. Publish a coordinated tester release before rolling out the new course; local verification does not change the hosted grader.
+
+## Release verification
+
+The Test workflow accepts a `course_ref` input for checking a coordinated course
+commit or branch before merging. It now includes regressions for all supported
+methods, exact fired-signal IDs, total detector deadlines (including trickled
+headers and bodies), incomplete origin responses, and empty inspected bodies.
+It also runs the frozen model checks and the real final-stage CLI in Go and
+Python. The Publish workflow requires these checks against the course's `main`
+branch before creating release artifacts.
+
+Follow the course repository's `RELEASING.md` to coordinate publication and the
+hosted tester selection. Passing local checks does not publish a new tester.

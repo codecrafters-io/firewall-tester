@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,18 +28,21 @@ type probe struct {
 	Pause       time.Duration
 	WantHeaders map[string]string
 	Absent      []string
+	WantSignals []string
+	MaxDuration time.Duration
 	Inputs      []string
 }
 type scenario struct {
-	Offline      bool
-	Concurrent   int
-	Name         string
-	Policy       string
-	Probes       []probe
-	Score        int
-	DetectorMode string
-	OriginStatus int
-	OriginBody   string
+	Offline         bool
+	Concurrent      int
+	Name            string
+	Policy          string
+	Probes          []probe
+	Score           int
+	DetectorMode    string
+	OriginStatus    int
+	OriginBody      string
+	OriginTruncated bool
 }
 
 func verify(stage int, launch launchFunc, log func(string, ...any)) error {
@@ -77,7 +81,11 @@ func runScenario(test scenario, launch launchFunc) error {
 			return
 		}
 		defer connection.Close()
-		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nX-WAF-Match: forged-origin\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n\r\n%s", status, http.StatusText(status), len(bodyText), bodyText)
+		length := len(bodyText)
+		if test.OriginTruncated {
+			length += 100
+		}
+		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nX-WAF-Match: forged-origin\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n\r\n%s", status, http.StatusText(status), length, bodyText)
 		writer.Flush()
 	}))
 	defer origin.Close()
@@ -97,6 +105,41 @@ func runScenario(test scenario, launch launchFunc) error {
 			return
 		}
 		switch test.DetectorMode {
+		case "slow_body":
+			body := []byte(`{"score":70}`)
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.WriteHeader(200)
+			w.(http.Flusher).Flush()
+			for _, value := range body {
+				time.Sleep(70 * time.Millisecond)
+				if _, err := w.Write([]byte{value}); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
+			}
+			return
+		case "slow_headers":
+			connection, writer, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				return
+			}
+			defer connection.Close()
+			for _, value := range []byte("HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\n{\"score\":70}") {
+				time.Sleep(30 * time.Millisecond)
+				if err := writer.WriteByte(value); err != nil {
+					return
+				}
+				if err := writer.Flush(); err != nil {
+					return
+				}
+			}
+			return
+		case "truncated":
+			w.Header().Set("Content-Length", "100")
+			io.WriteString(w, `{"score":70}`)
+			return
+		case "late":
+			time.Sleep(250 * time.Millisecond)
 		case "slow":
 			time.Sleep(350 * time.Millisecond)
 		case "error":
@@ -205,6 +248,7 @@ func runScenario(test scenario, launch launchFunc) error {
 		for key, value := range check.Headers {
 			request.Header.Set(key, value)
 		}
+		started := time.Now()
 		response, err := client.Do(request)
 		if err != nil {
 			return fmt.Errorf("request failed: %w", err)
@@ -213,6 +257,9 @@ func runScenario(test scenario, launch launchFunc) error {
 		response.Body.Close()
 		if err != nil {
 			return err
+		}
+		if check.MaxDuration > 0 && time.Since(started) > check.MaxDuration {
+			return fmt.Errorf("request exceeded deadline tolerance %s", check.MaxDuration)
 		}
 		if response.StatusCode != check.Status {
 			return fmt.Errorf("%s %s: expected HTTP %d, got %d: %s", method, target, check.Status, response.StatusCode, body)
@@ -250,6 +297,15 @@ func runScenario(test scenario, launch launchFunc) error {
 		for key, value := range check.WantHeaders {
 			if response.Header.Get(key) != value {
 				return fmt.Errorf("expected %s=%q, got %q", key, value, response.Header.Get(key))
+			}
+		}
+		if check.WantSignals != nil {
+			actual := strings.Split(response.Header.Get("X-WAF-Signals"), ",")
+			wanted := append([]string(nil), check.WantSignals...)
+			sort.Strings(actual)
+			sort.Strings(wanted)
+			if !slices.Equal(actual, wanted) {
+				return fmt.Errorf("expected signal IDs %q, got %q", wanted, actual)
 			}
 		}
 		if check.Status == 429 {
@@ -299,7 +355,7 @@ func runScenario(test scenario, launch launchFunc) error {
 			wanted := append([]string(nil), check.Inputs...)
 			sort.Strings(actual)
 			sort.Strings(wanted)
-			if fmt.Sprint(actual) != fmt.Sprint(wanted) {
+			if !slices.Equal(actual, wanted) {
 				return fmt.Errorf("inspection inputs: expected %q, got %q", wanted, actual)
 			}
 		}

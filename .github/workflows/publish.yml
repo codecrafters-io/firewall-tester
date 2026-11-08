@@ -9,7 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/test.yml
+
   publish_tester:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

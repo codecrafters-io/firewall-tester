@@ -76,7 +76,33 @@ func stageScenarios(stage int) []scenario {
 			},
 		}
 	case 2:
-		return []scenario{
+		scenarios := []scenario{}
+		for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+			// Each supported method preserves its request body and target.
+			scenarios = append(scenarios, scenario{
+				Name:   "proxy preserves " + method,
+				Policy: "{}",
+				Probes: []probe{
+					{
+						Method:  method,
+						Target:  "/echo?method=original",
+						Body:    `{ "value": "original" }`,
+						Headers: map[string]string{"Content-Type": "application/json"},
+						Status:  200,
+						Forward: true,
+					},
+				},
+			})
+		}
+		// An incomplete origin response becomes a safe gateway error.
+		scenarios = append(scenarios, scenario{
+			Name:   "incomplete origin response returns a gateway error",
+			Policy: "{}", OriginTruncated: true,
+			Probes: []probe{
+				{Target: "/truncated", Status: 502, Rule: "origin_unavailable", Forward: true},
+			},
+		})
+		return append(scenarios, []scenario{
 
 			{
 				Name:    "unavailable origin returns a gateway error",
@@ -136,7 +162,7 @@ func stageScenarios(stage int) []scenario {
 					},
 				},
 			},
-		}
+		}...)
 	case 3:
 		return []scenario{
 
@@ -257,6 +283,7 @@ func stageScenarios(stage int) []scenario {
 						WantHeaders: map[string]string{
 							"X-WAF-Score": "5",
 						},
+						WantSignals: []string{"sql-or", "sql-comment"},
 					},
 					{
 						Target:  "/search?a=or+1%3D1&b=or+1%3D1",
@@ -265,6 +292,7 @@ func stageScenarios(stage int) []scenario {
 						WantHeaders: map[string]string{
 							"X-WAF-Score": "3",
 						},
+						WantSignals: []string{"sql-or"},
 					},
 					{
 						Target:  "/clean",
@@ -292,6 +320,7 @@ func stageScenarios(stage int) []scenario {
 						WantHeaders: map[string]string{
 							"X-WAF-Score": "5",
 						},
+						WantSignals: []string{"sql-or", "sql-comment"},
 					},
 				},
 			},
@@ -360,6 +389,10 @@ func stageScenarios(stage int) []scenario {
 		for _, mode := range []string{
 			"error",
 			"slow",
+			"late",
+			"slow_body",
+			"slow_headers",
+			"truncated",
 			"fraction",
 			"boolean",
 			"missing",
@@ -374,9 +407,10 @@ func stageScenarios(stage int) []scenario {
 				DetectorMode: mode,
 				Probes: []probe{
 					{
-						Target:  "/search?q=clean",
-						Status:  200,
-						Forward: true,
+						Target:      "/search?q=clean",
+						MaxDuration: 600 * time.Millisecond,
+						Status:      200,
+						Forward:     true,
 						WantHeaders: map[string]string{
 							"X-WAF-Detector-Status": "unavailable",
 						},
@@ -449,6 +483,23 @@ func stageScenarios(stage int) []scenario {
 		}
 	case 8:
 		return []scenario{
+			// Structured inspection adds no body input for an empty request.
+			{
+				Name:   "empty inspected bodies contribute no strings",
+				Policy: policy(normPolicy, inspect, classifier),
+				Probes: []probe{
+					{Target: "/echo", Status: 200, Forward: true, Inputs: []string{"/echo"}},
+					{Method: "POST", Target: "/echo", Headers: map[string]string{"Content-Type": "application/json"}, Status: 200, Forward: true, Inputs: []string{"/echo"}},
+				},
+			},
+			// Empty bodies are also omitted when normalization is disabled.
+			{
+				Name:   "empty inspected raw body contributes no string",
+				Policy: policy(inspect, classifier),
+				Probes: []probe{
+					{Target: "/echo?q=original", Status: 200, Forward: true, Inputs: []string{"/echo?q=original"}},
+				},
+			},
 
 			{
 				Name:   "parsed string values reach the detector",
@@ -653,6 +704,14 @@ func stageScenarios(stage int) []scenario {
 	case 10:
 		policyText := `{"mode":"log","response":{"max_bytes":128,"deny_patterns":["INTERNAL_KEY_[A-Z0-9]+"]}}`
 		return []scenario{
+			// Bounded inspection must not release an incomplete origin response.
+			{
+				Name:   "incomplete inspected response returns a gateway error",
+				Policy: policyText, OriginTruncated: true,
+				Probes: []probe{
+					{Target: "/truncated", Status: 502, Rule: "origin_unavailable", Forward: true},
+				},
+			},
 			{
 				Name:       "response denial replaces a logged request match",
 				Policy:     policy(`"mode":"log"`, `"denylist":[{"id":"request-match","term":"debug"}]`, `"response":{"max_bytes":128,"deny_patterns":["INTERNAL_KEY_[A-Z0-9]+"]}`),

@@ -5,7 +5,7 @@ The active tester for **Build your own Web Application Firewall** uses `internal
 ```text
 External client -> Learner WAF -> Local application origin
                          |
-                         +----> Scripted ML detector
+                         +----> Coursework ML detector
 ```
 
 ## Run locally
@@ -22,13 +22,13 @@ Each new stage is checked against its corresponding Go and Python reference. The
 
 `test.sh` and `cmd/tester` use the new WAF grader. It observes original request bytes, origin request counts, response status/body/headers, detector calls, timeout fallback, body-validation failures, spoofed diagnostics, route decisions, response leaks, and private-field export patches. No model-proposed tools are executed.
 
-The ML detector fixtures return deterministic scores. The course repository separately supplies a frozen real classifier, training source, held-out examples, and observed evaluation results. These are distinct checks of integration and model behavior.
+The main exercises use a tester-managed customer application and an embedded frozen classifier. Output compares direct application responses with firewall responses, diagnostics, and observed origin request counts. The final replay includes successful defenses, an unblocked detection probe, and a known false positive. Additional scripted detector responses check integration boundaries and failure behavior. Training source, held-out examples, and the reproducible model evaluation are maintained under `model_development` in the course repository; tests verify the embedded weights and scores match.
 
 ## Migration status
 
 The previous AI gateway grader and fixtures remain under `internal` to preserve the existing uncommitted work during this conversion. They are historical and are not selected by the active tester entry point or `make test`. Their former stage Make targets have been removed. Cleanup of those files can follow the coordinated migration commit.
 
-The published v1 tester predates this inbound curriculum. Publish a coordinated tester release before rolling out the new course; local verification does not change the hosted grader.
+The integrated application exercises require the coordinated v4 tester release. Earlier releases can grade older stage orders and do not include the visible coursework replay. Publish the matching tester before applying the updated hosted course.
 
 ## Release verification
 

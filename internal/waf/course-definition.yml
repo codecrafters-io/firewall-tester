@@ -27,14 +27,14 @@ marketing:
 
       Across ten stages, you''ll extend the same program, keeping earlier behavior working as you add each capability.'
   - question_markdown: Where does machine learning fit?
-    answer_markdown: 'A separate trusted detector scores HTTP inspection inputs. Your firewall calls it with a deadline, validates the result, combines its score with policy, and reports when detection is unavailable. A supplied small pretrained classifier lets you exercise real inference locally without an API key or model-training prerequisites.'
+    answer_markdown: 'A separate trusted detector scores HTTP inspection inputs. Your firewall calls it with a deadline, validates the result, combines its score with policy, and reports when detection is unavailable. The main exercises run a small pretrained classifier, while additional scripted detector replies test exact boundaries and failure behavior. No API key or model-training prerequisites are required.'
   - question_markdown: What is the final challenge?
     answer_markdown: 'An export endpoint accepts a list of record fields to return, but its vulnerable implementation also allows clients to request a private field. These requests can look harmless to generic rules and ML detection. You''ll add an endpoint-specific virtual patch that blocks private-field requests before they reach the application, while keeping legitimate public-field exports working.
 
 
       The final stage combines this patch with your earlier controls: request inspection blocks disallowed input before the application processes it, while response inspection withholds responses containing protected data.'
   - question_markdown: What do I need?
-    answer_markdown: 'Use Go or Python, with familiarity with HTTP, JSON, and Git. The tester supplies a local application, detector replies, policies, and dummy data. The optional lab application and ML detector use Python''s standard library. No paid service is needed.
+    answer_markdown: 'Use Go or Python, with familiarity with HTTP, JSON, and Git. The tester starts the protected application and detector, supplies policies and dummy data, and shows direct-versus-protected responses throughout the exercises. You implement only the firewall. No separate application setup, model training, or paid service is needed.
 
 
       This is a learning implementation with an explicit HTTP subset. It is not a production security guarantee. The lessons call out inspection limits, false positives, and the application''s continuing responsibility to validate and authorize requests.'

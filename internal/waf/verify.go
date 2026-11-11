@@ -18,6 +18,8 @@ import (
 type launchFunc func(origin, detector, policy string) (func(), error)
 type probe struct {
 	Method, Target, Body string
+	WantBody             string
+	Traffic              string
 	Headers              map[string]string
 	Status               int
 	Rule                 string
@@ -32,6 +34,7 @@ type probe struct {
 	Inputs      []string
 }
 type scenario struct {
+	Coursework      bool
 	Offline         bool
 	Name            string
 	Policy          string
@@ -44,16 +47,16 @@ type scenario struct {
 }
 
 func verify(stage int, launch launchFunc, log func(string, ...any)) error {
-	for _, test := range stageScenarios(stage) {
+	for _, test := range append(courseworkScenarios(stage), stageScenarios(stage)...) {
 		log("%s", test.Name)
-		if err := runScenario(test, launch); err != nil {
+		if err := runScenario(test, launch, log); err != nil {
 			return fmt.Errorf("%s: %w", test.Name, err)
 		}
 	}
 	return nil
 }
 
-func runScenario(test scenario, launch launchFunc) error {
+func runScenario(test scenario, launch launchFunc, log func(string, ...any)) error {
 	var lock sync.Mutex
 	received := []*http.Request{}
 	bodies := [][]byte{}
@@ -64,6 +67,11 @@ func runScenario(test scenario, launch launchFunc) error {
 		received = append(received, r.Clone(r.Context()))
 		bodies = append(bodies, body)
 		lock.Unlock()
+		if test.Coursework {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			serveApplication(w, r)
+			return
+		}
 		status := test.OriginStatus
 		if status == 0 {
 			status = 200
@@ -166,7 +174,11 @@ func runScenario(test scenario, launch launchFunc) error {
 			w.WriteHeader(302)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]int{"score": test.Score})
+		score := test.Score
+		if test.Coursework {
+			score = exerciseScore(value.Inputs)
+		}
+		json.NewEncoder(w).Encode(map[string]int{"score": score})
 	}))
 	defer detector.Close()
 	stop, err := launch(origin.URL, detector.URL, test.Policy)
@@ -176,7 +188,35 @@ func runScenario(test scenario, launch launchFunc) error {
 	defer stop()
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DisableCompression: true}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
+	replayCounts := map[string]int{}
 	for _, check := range test.Probes {
+		if test.Coursework {
+			method := check.Method
+			if method == "" {
+				method = "GET"
+			}
+			baseline, err := http.NewRequest(method, origin.URL+check.Target, strings.NewReader(check.Body))
+			if err != nil {
+				return err
+			}
+			for key, value := range check.Headers {
+				baseline.Header.Set(key, value)
+			}
+			direct, err := client.Do(baseline)
+			if err != nil {
+				return fmt.Errorf("application baseline: %w", err)
+			}
+			exposed, err := io.ReadAll(direct.Body)
+			direct.Body.Close()
+			if err != nil {
+				return err
+			}
+			log("Request: %s %s", method, check.Target)
+			if check.Body != "" {
+				log("Request body: %s", check.Body)
+			}
+			log("Application without firewall: HTTP %d, %s", direct.StatusCode, exposed)
+		}
 		lock.Lock()
 		before := len(received)
 		detectorBefore := len(detectorInputs)
@@ -221,6 +261,14 @@ func runScenario(test scenario, launch launchFunc) error {
 		if response.StatusCode != check.Status {
 			return fmt.Errorf("%s %s: expected HTTP %d, got %d: %s", method, target, check.Status, response.StatusCode, body)
 		}
+		if test.Coursework {
+			log("Through your firewall: HTTP %d, %s", response.StatusCode, body)
+			for _, header := range []string{"X-WAF-Match", "X-WAF-Score", "X-WAF-ML-Score", "X-WAF-Detector-Status"} {
+				if value := response.Header.Get(header); value != "" {
+					log("%s: %s", header, value)
+				}
+			}
+		}
 		if check.Rule != "" {
 			if bytes.Contains(body, []byte("INTERNAL_KEY_7F2A")) || bytes.Contains(body, []byte("password_hash")) {
 				return fmt.Errorf("protected input or origin data echoed in denial")
@@ -244,7 +292,14 @@ func runScenario(test scenario, launch launchFunc) error {
 			if expected == "" {
 				expected = `{ "ok": true }`
 			}
-			if !bytes.Equal(body, []byte(expected)) || response.Header.Get("X-Request-Id") != "origin-7" {
+			if check.WantBody != "" {
+				expected = check.WantBody
+			}
+			requestID := "origin-7"
+			if test.Coursework {
+				requestID = "course-origin"
+			}
+			if !bytes.Equal(body, []byte(expected)) || response.Header.Get("X-Request-Id") != requestID {
 				return fmt.Errorf("origin body or request ID changed: %s", body)
 			}
 			if response.Header.Get("X-Origin-Hop") != "" || response.Header.Get("X-Second-Hop") != "" {
@@ -285,6 +340,12 @@ func runScenario(test scenario, launch launchFunc) error {
 		if check.Forward {
 			expectedCount = 1
 		}
+		if test.Coursework {
+			log("Application requests through firewall: %d", count)
+			if check.Rule == "response_leak" {
+				log("Response withheld after application processing.")
+			}
+		}
 		if count != expectedCount {
 			return fmt.Errorf("expected %d origin requests, got %d", expectedCount, count)
 		}
@@ -311,11 +372,35 @@ func runScenario(test scenario, launch launchFunc) error {
 				return fmt.Errorf("inspection inputs: expected %q, got %q", wanted, actual)
 			}
 		}
+		if check.Traffic != "" {
+			outcome := "preserved legitimate"
+			switch check.Traffic {
+			case "attack":
+				outcome = "blocked requests"
+				if check.Rule == "response_leak" {
+					outcome = "withheld responses"
+				}
+			case "probe":
+				outcome = "unblocked probes"
+			case "legitimate":
+				if check.Rule != "" {
+					outcome = "false positives"
+				}
+			}
+			replayCounts[outcome]++
+			log("Replay outcome: %s", outcome)
+		}
+
 		var policy map[string]json.RawMessage
 		json.Unmarshal([]byte(test.Policy), &policy)
 		if (policy["classifier"] == nil || target == "/health" || check.Status == 400 || check.Status == 413 || check.Status == 415) && len(newInputs) > 0 {
 			return fmt.Errorf("detector called without classifier policy")
 		}
+	}
+	if len(replayCounts) != 0 {
+		log("Replay totals: blocked requests=%d, withheld responses=%d, unblocked probes=%d, preserved legitimate=%d, false positives=%d",
+			replayCounts["blocked requests"], replayCounts["withheld responses"], replayCounts["unblocked probes"], replayCounts["preserved legitimate"], replayCounts["false positives"])
+		log("An unblocked detection probe does not prove exploitation. Route thresholds do not override hard signatures.")
 	}
 	return nil
 }

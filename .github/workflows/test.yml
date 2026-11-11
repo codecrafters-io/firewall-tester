@@ -41,8 +41,8 @@ jobs:
         run: make test
         env:
           WAF_COURSE_DIR: ${{ github.workspace }}/course
-      - name: Test supplied model
-        run: python -m unittest discover -s course/examples/waf-lab -p 'test_*.py'
+      - name: Test course model
+        run: python -m unittest discover -s course/tests -p 'test_*.py'
       - name: Build tester
         run: make build
       - name: Verify final-stage submission interface

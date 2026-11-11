@@ -632,78 +632,8 @@ func stageScenarios(stage int) []scenario {
 			},
 		}
 	case 9:
-		return []scenario{
-
-			{
-				Name:       "concurrent clients cannot exceed the same IP limit",
-				Policy:     `{"rate_limit":{"requests":2,"window_seconds":3}}`,
-				Concurrent: 10,
-			},
-
-			{
-				Name:   "IP-scoped fixed window and health exemption",
-				Policy: `{"mode":"log","rate_limit":{"requests":2,"window_seconds":1,"paths":["/login"]}}`,
-				Probes: []probe{
-					allow("/products"),
-					{
-						Target: "/health",
-						Status: 200,
-					},
-					allow("/login"),
-					{
-						Target: "/login?q=next",
-						Headers: map[string]string{
-							"X-Forwarded-For": "another-client",
-						},
-						Status:  200,
-						Forward: true,
-					},
-					{
-						Target: "/login?q=third",
-						Status: 429,
-						Rule:   "rate_limit",
-						WantHeaders: map[string]string{
-							"Retry-After": "1",
-						},
-					},
-					{
-						Target:  "/login",
-						Pause:   1100 * time.Millisecond,
-						Status:  200,
-						Forward: true,
-					},
-				},
-			},
-
-			{
-				Name:   "Retry-After rounds the remaining window up",
-				Policy: `{"rate_limit":{"requests":2,"window_seconds":3,"paths":["/login"]}}`,
-				Probes: []probe{
-					allow("/login"),
-					allow("/login"),
-					{
-						Target: "/login",
-						Status: 429,
-						Rule:   "rate_limit",
-						WantHeaders: map[string]string{
-							"Retry-After": "3",
-						},
-					},
-					{
-						Target: "/login",
-						Pause:  1200 * time.Millisecond,
-						Status: 429,
-						Rule:   "rate_limit",
-						WantHeaders: map[string]string{
-							"Retry-After": "2",
-						},
-					},
-				},
-			},
-		}
-	case 10:
 		policyText := `{"mode":"log","response":{"max_bytes":128,"deny_patterns":["INTERNAL_KEY_[A-Z0-9]+"]}}`
-		return []scenario{
+		scenarios := []scenario{
 			// Bounded inspection must not release an incomplete origin response.
 			{
 				Name:   "incomplete inspected response returns a gateway error",
@@ -773,6 +703,31 @@ func stageScenarios(stage int) []scenario {
 					allow("/products"),
 				},
 			},
+			// Invalid UTF-8 is replaced only in the inspection copy.
+			{
+				Name:       "invalid UTF-8 response bytes are searched with replacement",
+				Policy:     `{"response":{"max_bytes":128,"deny_patterns":["\uFFFDsecret"]}}`,
+				OriginBody: "\xffsecret",
+				Probes: []probe{
+					{Target: "/debug", Status: 403, Rule: "response_leak", Forward: true},
+				},
+			},
+			// Allowed responses preserve invalid UTF-8 bytes unchanged.
+			{
+				Name:       "clean invalid UTF-8 response bytes are preserved",
+				Policy:     policyText,
+				OriginBody: "\xffclean",
+				Probes:     []probe{allow("/products")},
+			},
+			// Raw scanning still catches unescaped secrets in invalid JSON.
+			{
+				Name:       "nonstandard JSON still receives raw inspection",
+				Policy:     policyText,
+				OriginBody: `{"secret":"INTERNAL_KEY_7F2A","number":NaN}`,
+				Probes: []probe{
+					{Target: "/debug", Status: 403, Rule: "response_leak", Forward: true},
+				},
+			},
 			{
 				Name:       "response limit is enforced",
 				Policy:     `{"response":{"max_bytes":4,"deny_patterns":[]}}`,
@@ -787,7 +742,17 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
-	case 11:
+		// Nonstandard constants disable decoded-string extraction.
+		for _, constant := range []string{"NaN", "Infinity", "-Infinity"} {
+			scenarios = append(scenarios, scenario{
+				Name:       "nonstandard JSON uses raw inspection: " + constant,
+				Policy:     policyText,
+				OriginBody: `{"secret":"\u0049NTERNAL_KEY_7F2A","number":` + constant + `}`,
+				Probes:     []probe{allow("/products")},
+			})
+		}
+		return scenarios
+	case 10:
 		finale := []scenario{
 
 			{
@@ -894,7 +859,7 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
-		for earlier := 2; earlier <= 10; earlier++ {
+		for earlier := 2; earlier < len(slugs); earlier++ {
 			finale = append(finale, stageScenarios(earlier)...)
 		}
 		return finale

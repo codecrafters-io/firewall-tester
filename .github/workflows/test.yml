@@ -48,7 +48,7 @@ jobs:
       - name: Verify final-stage submission interface
         run: |
           for language in go python; do
-            CODECRAFTERS_REPOSITORY_DIR="$GITHUB_WORKSPACE/course/solutions/$language/11-mu9/code" \
+            CODECRAFTERS_REPOSITORY_DIR="$GITHUB_WORKSPACE/course/solutions/$language/10-mu9/code" \
             CODECRAFTERS_TEST_CASES_JSON='[{"slug":"mu9","tester_log_prefix":"final","title":"Virtually patch an endpoint"}]' \
               ./dist/tester
           done

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var slugs = []string{"fi6", "tf0", "kg7", "wt4", "ro3", "xd5", "si3", "qe5", "ou9", "as4", "mu9"}
+var slugs = []string{"fi6", "tf0", "kg7", "wt4", "ro3", "xd5", "si3", "qe5", "as4", "mu9"}
 
 func waitHealth(done <-chan struct{}) error {
 	client := &http.Client{Timeout: 200 * time.Millisecond, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}

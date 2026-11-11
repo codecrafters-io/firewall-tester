@@ -25,7 +25,6 @@ type probe struct {
 	// AnyBody accepts a locally generated error whose body the stage does not
 	// prescribe, such as an HTTP server rejecting a malformed request target.
 	AnyBody     bool
-	Pause       time.Duration
 	WantHeaders map[string]string
 	Absent      []string
 	WantSignals []string
@@ -34,7 +33,6 @@ type probe struct {
 }
 type scenario struct {
 	Offline         bool
-	Concurrent      int
 	Name            string
 	Policy          string
 	Probes          []probe
@@ -178,48 +176,7 @@ func runScenario(test scenario, launch launchFunc) error {
 	defer stop()
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DisableCompression: true}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
-	if test.Concurrent > 0 {
-		var group sync.WaitGroup
-		statuses := make(chan int, test.Concurrent)
-		for i := 0; i < test.Concurrent; i++ {
-			group.Add(1)
-			go func() {
-				defer group.Done()
-				response, err := client.Get("http://127.0.0.1:8080/login")
-				if err != nil {
-					statuses <- 0
-					return
-				}
-				io.Copy(io.Discard, response.Body)
-				response.Body.Close()
-				statuses <- response.StatusCode
-			}()
-		}
-		group.Wait()
-		close(statuses)
-		allowed := 0
-		limited := 0
-		for status := range statuses {
-			if status == 200 {
-				allowed++
-			} else if status == 429 {
-				limited++
-			} else {
-				return fmt.Errorf("unexpected burst status %d", status)
-			}
-		}
-		lock.Lock()
-		forwarded := len(received)
-		lock.Unlock()
-		if forwarded != allowed {
-			return fmt.Errorf("rate-limited requests reached origin")
-		}
-		if allowed != 2 || limited != test.Concurrent-2 {
-			return fmt.Errorf("atomic burst: expected 2 permits, got %d permits and %d limits", allowed, limited)
-		}
-	}
 	for _, check := range test.Probes {
-		time.Sleep(check.Pause)
 		lock.Lock()
 		before := len(received)
 		detectorBefore := len(detectorInputs)
@@ -308,11 +265,6 @@ func runScenario(test scenario, launch launchFunc) error {
 				return fmt.Errorf("expected signal IDs %q, got %q", wanted, actual)
 			}
 		}
-		if check.Status == 429 {
-			if value, err := strconv.Atoi(response.Header.Get("Retry-After")); err != nil || value < 1 {
-				return fmt.Errorf("invalid Retry-After")
-			}
-		}
 		for _, key := range check.Absent {
 			if response.Header.Get(key) != "" {
 				return fmt.Errorf("unexpected %s: %q", key, response.Header.Get(key))
@@ -361,7 +313,7 @@ func runScenario(test scenario, launch launchFunc) error {
 		}
 		var policy map[string]json.RawMessage
 		json.Unmarshal([]byte(test.Policy), &policy)
-		if (policy["classifier"] == nil || target == "/health" || check.Status == 400 || check.Status == 413 || check.Status == 415 || check.Status == 429) && len(newInputs) > 0 {
+		if (policy["classifier"] == nil || target == "/health" || check.Status == 400 || check.Status == 413 || check.Status == 415) && len(newInputs) > 0 {
 			return fmt.Errorf("detector called without classifier policy")
 		}
 	}

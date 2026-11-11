@@ -13,7 +13,7 @@ func mutatedReference(t *testing.T, replacements ...string) launchFunc {
 	if root == "" {
 		root = "../../../build-your-own-firewall"
 	}
-	source := filepath.Join(root, "solutions", "python", "11-mu9", "code")
+	source := filepath.Join(root, "solutions", "python", "10-mu9", "code")
 	target := t.TempDir()
 	if err := os.Mkdir(filepath.Join(target, "app"), 0700); err != nil {
 		t.Fatal(err)
@@ -121,5 +121,17 @@ func TestGraderRejectsEmptyBodyPlaceholder(t *testing.T) {
 	// Assert
 	if err == nil || !strings.Contains(err.Error(), "inspection inputs:") {
 		t.Fatal("empty body placeholder passed")
+	}
+}
+
+// Nonstandard JSON constants must prevent decoded-string response inspection.
+func TestGraderRejectsNonstandardResponseJSON(t *testing.T) {
+	// Arrange
+	launch := mutatedReference(t, "parse_constant=invalid_constant)))", "parse_constant=float)))")
+	// Act
+	err := verify(9, launch, t.Logf)
+	// Assert
+	if err == nil || !strings.Contains(err.Error(), "nonstandard JSON uses raw inspection: NaN") {
+		t.Fatal("nonstandard JSON constants were accepted for response extraction")
 	}
 }

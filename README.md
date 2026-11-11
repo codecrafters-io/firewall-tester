@@ -20,7 +20,7 @@ make build
 
 Each new stage is checked against its corresponding Go and Python reference. The preceding Python reference must fail the next stage's new control. The final stage repeats the earlier contract cases in addition to checking the virtual patch.
 
-`test.sh` and `cmd/tester` use the new WAF grader. It observes original request bytes, origin request counts, response status/body/headers, detector calls, timeout fallback, body-validation failures, spoofed diagnostics, route decisions, fixed-window rate limits, concurrent bursts, response leaks, and private-field export patches. No model-proposed tools are executed.
+`test.sh` and `cmd/tester` use the new WAF grader. It observes original request bytes, origin request counts, response status/body/headers, detector calls, timeout fallback, body-validation failures, spoofed diagnostics, route decisions, response leaks, and private-field export patches. No model-proposed tools are executed.
 
 The ML detector fixtures return deterministic scores. The course repository separately supplies a frozen real classifier, training source, held-out examples, and observed evaluation results. These are distinct checks of integration and model behavior.
 

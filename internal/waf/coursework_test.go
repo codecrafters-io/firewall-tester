@@ -138,15 +138,11 @@ func TestExerciseModelHeldoutParity(t *testing.T) {
 // The finale visibly distinguishes withheld responses, probes, and false positives.
 func TestCourseworkReplayOutput(t *testing.T) {
 	// Arrange
-	directory := filepath.Join(courseRoot(), "solutions", "python", "10-mu9", "code")
-	directory, err := filepath.Abs(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	directory := referenceDirectory(t, "python", 10)
 	var output strings.Builder
 	log := func(format string, args ...any) { fmt.Fprintf(&output, format+"\n", args...) }
 	// Act
-	err = runScenario(courseworkScenarios(10)[0], referenceLaunch(t, directory), log)
+	err := runScenario(courseworkScenarios(10)[0], referenceLaunch(t, directory), log)
 	// Assert
 	if err != nil {
 		t.Fatal(err, output.String())

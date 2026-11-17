@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+func referenceDirectory(t *testing.T, language string, stage int) string {
+	t.Helper()
+	base := filepath.Join("testdata", "references")
+	if stage <= 3 {
+		base = filepath.Join(courseRoot(), "solutions")
+	}
+	directory, err := filepath.Abs(filepath.Join(base, language, fmt.Sprintf("%02d-%s", stage, slugs[stage-1]), "code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
 func referenceLaunch(t *testing.T, directory string) launchFunc {
 	t.Helper()
 	return func(origin, detector, policy string) (func(), error) {
@@ -62,15 +75,10 @@ func referenceLaunch(t *testing.T, directory string) launchFunc {
 // Each cumulative reference implements the behavior introduced by its own stage.
 func TestStageReferences(t *testing.T) {
 	// Arrange
-	root := os.Getenv("WAF_COURSE_DIR")
-	if root == "" {
-		root = "../../../build-your-own-firewall"
-	}
-	root, _ = filepath.Abs(root)
 	for _, language := range []string{"go", "python"} {
-		for i, slug := range slugs {
+		for i := range slugs {
 			t.Run(fmt.Sprintf("%s/stage-%02d", language, i+1), func(t *testing.T) {
-				directory := filepath.Join(root, "solutions", language, fmt.Sprintf("%02d-%s", i+1, slug), "code")
+				directory := referenceDirectory(t, language, i+1)
 				// Act
 				err := verify(i+1, referenceLaunch(t, directory), t.Logf)
 				// Assert
@@ -85,15 +93,10 @@ func TestStageReferences(t *testing.T) {
 // A previous-stage reference cannot pass a stage that introduces a new control.
 func TestPreviousStageFails(t *testing.T) {
 	// Arrange
-	root := os.Getenv("WAF_COURSE_DIR")
-	if root == "" {
-		root = "../../../build-your-own-firewall"
-	}
-	root, _ = filepath.Abs(root)
 	for _, language := range []string{"go", "python"} {
 		for i := 1; i < len(slugs); i++ {
 			t.Run(fmt.Sprintf("%s/stage-%02d", language, i+1), func(t *testing.T) {
-				directory := filepath.Join(root, "solutions", language, fmt.Sprintf("%02d-%s", i, slugs[i-1]), "code")
+				directory := referenceDirectory(t, language, i)
 				// Act
 				err := verify(i+1, referenceLaunch(t, directory), t.Logf)
 				// Assert

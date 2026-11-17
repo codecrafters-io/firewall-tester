@@ -9,11 +9,7 @@ import (
 
 func mutatedReference(t *testing.T, replacements ...string) launchFunc {
 	t.Helper()
-	root := os.Getenv("WAF_COURSE_DIR")
-	if root == "" {
-		root = "../../../build-your-own-firewall"
-	}
-	source := filepath.Join(root, "solutions", "python", "10-mu9", "code")
+	source := referenceDirectory(t, "python", 10)
 	target := t.TempDir()
 	if err := os.Mkdir(filepath.Join(target, "app"), 0700); err != nil {
 		t.Fatal(err)

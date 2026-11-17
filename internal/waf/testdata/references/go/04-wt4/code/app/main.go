@@ -1,0 +1,185 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+var hop = map[string]bool{"Connection": true, "Keep-Alive": true, "Proxy-Authenticate": true,
+	"Proxy-Authorization": true, "Te": true, "Trailer": true, "Transfer-Encoding": true,
+	"Upgrade": true, "Content-Length": true}
+
+func copyHeaders(destination, source http.Header) {
+	excluded := map[string]bool{}
+	for _, name := range strings.Split(strings.Join(source.Values("Connection"), ","), ",") {
+		excluded[http.CanonicalHeaderKey(strings.TrimSpace(name))] = true
+	}
+	for key, values := range source {
+		if hop[key] || excluded[key] || strings.HasPrefix(strings.ToLower(key), "x-waf-") {
+			continue
+		}
+		destination[key] = append([]string(nil), values...)
+	}
+}
+
+func reject(w http.ResponseWriter, status int, rule string, diagnostics http.Header) {
+	for key, values := range diagnostics {
+		w.Header()[key] = values
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-WAF-Match", rule)
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"rule": rule}})
+}
+
+type Rule struct {
+	ID   string `json:"id"`
+	Term string `json:"term"`
+}
+type Policy struct {
+	Mode           string   `json:"mode"`
+	Denylist       []Rule   `json:"denylist"`
+	Normalization  bool     `json:"normalization"`
+	InspectHeaders []string `json:"inspect_headers"`
+}
+
+func literalMatch(policy Policy, inputs []string) string {
+	for _, rule := range policy.Denylist {
+		for _, value := range inputs {
+			if strings.Contains(value, rule.Term) {
+				return rule.ID
+			}
+		}
+	}
+	return ""
+}
+
+func formValues(raw string, inspectBare bool) ([]string, error) {
+	values := []string{}
+	for _, part := range strings.Split(raw, "&") {
+		if part == "" {
+			continue
+		}
+		key, value, hasValue := strings.Cut(part, "=")
+		if !hasValue && inspectBare {
+			value = key
+		}
+		decodedKey, err := url.QueryUnescape(key)
+		if err != nil || !utf8.ValidString(decodedKey) {
+			return nil, fmt.Errorf("invalid query key")
+		}
+		decoded, err := url.QueryUnescape(value)
+		if err != nil || !utf8.ValidString(decoded) {
+			return nil, fmt.Errorf("invalid query value")
+		}
+		values = append(values, decoded)
+	}
+	return values, nil
+}
+
+func canonical(value string) string { return cases.Fold().String(norm.NFKC.String(value)) }
+
+func main() {
+	origin := flag.String("origin", "", "Origin web application URL")
+	detector := flag.String("detector", "", "ML detector URL")
+	policyPath := flag.String("policy", "", "Trusted policy JSON file")
+	flag.Parse()
+	_ = detector
+	data, err := os.ReadFile(*policyPath)
+	if err != nil {
+		panic(err)
+	}
+	var policy Policy
+	if err := json.Unmarshal(data, &policy); err != nil {
+		panic(err)
+	}
+	client := &http.Client{Timeout: 3 * time.Second,
+		Transport:     &http.Transport{DisableCompression: true},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.RequestURI() == "/health" {
+			w.WriteHeader(200)
+			return
+		}
+		diagnostics := http.Header{}
+		var reader io.Reader = r.Body
+		body, err := io.ReadAll(reader)
+		if err != nil {
+			reject(w, 400, "invalid_request", diagnostics)
+			return
+		}
+		inputs := []string{r.URL.RequestURI(), string(body)}
+		decodedPath := r.URL.Path
+		if !utf8.ValidString(decodedPath) {
+			reject(w, 400, "invalid_request", diagnostics)
+			return
+		}
+		if policy.Normalization {
+			values, err := formValues(r.URL.RawQuery, true)
+			if err != nil {
+				reject(w, 400, "invalid_request", diagnostics)
+				return
+			}
+			inputs = []string{decodedPath}
+			inputs = append(inputs, values...)
+			for _, name := range policy.InspectHeaders {
+				inputs = append(inputs, r.Header.Values(name)...)
+			}
+			inputs = append(inputs, string(body))
+		}
+		if policy.Normalization {
+			for index, value := range inputs {
+				inputs[index] = canonical(value)
+			}
+		}
+		match := literalMatch(policy, inputs)
+		if match != "" {
+			if policy.Mode != "log" {
+				reject(w, 403, match, diagnostics)
+				return
+			}
+			diagnostics.Set("X-WAF-Match", match)
+		}
+		request, err := http.NewRequestWithContext(r.Context(), r.Method, strings.TrimRight(*origin, "/")+r.URL.RequestURI(), bytes.NewReader(body))
+		if err != nil {
+			reject(w, 502, "origin_unavailable", diagnostics)
+			return
+		}
+		copyHeaders(request.Header, r.Header)
+		response, err := client.Do(request)
+		if err != nil {
+			reject(w, 502, "origin_unavailable", diagnostics)
+			return
+		}
+		defer response.Body.Close()
+		var responseReader io.Reader = response.Body
+		content, err := io.ReadAll(responseReader)
+		if err != nil {
+			reject(w, 502, "origin_unavailable", diagnostics)
+			return
+		}
+		copyHeaders(w.Header(), response.Header)
+		for key, values := range diagnostics {
+			w.Header()[key] = values
+		}
+		w.WriteHeader(response.StatusCode)
+		w.Write(content)
+	})
+	server := &http.Server{Addr: "127.0.0.1:8080", Handler: handler}
+	if err := server.ListenAndServe(); err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(1)
+	}
+}

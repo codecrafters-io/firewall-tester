@@ -167,6 +167,10 @@ func stageScenarios(stage int) []scenario {
 		}...)
 	case 3:
 		return []scenario{
+			// Denylist terms are literal even when they contain regex metacharacters.
+			{Name: "denylist terms are literal substrings", Policy: policy(`"denylist":[{"id":"literal-dot","term":"a.b"}]`), Probes: []probe{
+				allow("/axb"), deny("/a.b", "literal-dot"),
+			}},
 			// Policy order wins even when a later rule matches the target first.
 			{Name: "rule precedence spans independent inputs", Policy: policy(`"denylist":[{"id":"body-first","term":"needle"},{"id":"target-second","term":"target"}]`), Probes: []probe{
 				{Method: "POST", Target: "/target", Body: "needle", Status: 403, Rule: "body-first"},
@@ -218,6 +222,16 @@ func stageScenarios(stage int) []scenario {
 		}
 	case 4:
 		return []scenario{
+			// A configured header value retains its comma during literal matching.
+			{Name: "header values are not comma split", Policy: policy(normPolicy, `"denylist":[{"id":"comma","term":"union, select"}]`), Probes: []probe{
+				{Target: "/search", Headers: map[string]string{"X-Search": "union, select"}, Status: 403, Rule: "comma"},
+			}},
+			// An attack in a later occurrence of a configured header is inspected.
+			{Name: "every configured header occurrence is inspected", Policy: policy(normPolicy, rules), Probes: []probe{
+				{Target: "/search", HeaderValues: map[string][]string{"X-Search": {"clean", "<script>"}}, Status: 403, Rule: "xss-script"},
+			}},
+			// Path validation also runs when the normalization field is omitted.
+			{Name: "path validation without normalization policy", Policy: "{}", Probes: []probe{invalid("/search%FF")}},
 			// Path validation is required even with normalization disabled.
 			{Name: "raw inspection retains validation and case", Policy: policy(`"normalization":false`, `"inspect_headers":["X-Search"]`, `"denylist":[{"id":"raw","term":"Needle"}]`), Probes: []probe{
 				invalid("/path%FF"),
@@ -308,6 +322,15 @@ func stageScenarios(stage int) []scenario {
 		}
 	case 5:
 		scenarios := []scenario{
+			// A regex cannot match by spanning independently inspected query values.
+			{Name: "heuristic patterns keep input boundaries", Policy: policy(normPolicy, `"heuristics":{"threshold":1,"signals":[{"id":"boundary","pattern":"left(.|\\n)*right","weight":1}]}`), Probes: []probe{
+				{Target: "/search?a=left&b=right", Status: 200, Forward: true, WantHeaders: map[string]string{"X-WAF-Score": "0"}, Absent: []string{"X-WAF-Match", "X-WAF-Signals"}},
+				deny("/search?q=leftright", "heuristic_score"),
+			}},
+			// Invalid requests return before any scoring diagnostics are emitted.
+			{Name: "validation errors omit score diagnostics", Policy: policy(normPolicy, heuristics), Probes: []probe{
+				{Target: "/search?q=%FF", Status: 400, Rule: "invalid_request", Absent: []string{"X-WAF-Score", "X-WAF-Signals"}},
+			}},
 			// Signals in separate inputs combine without repeated occurrences adding weight.
 			{Name: "signals combine across inputs", Policy: policy(normPolicy, heuristics), Probes: []probe{
 				{Target: "/search?a=or+1%3D1&b=--", Status: 403, Rule: "heuristic_score", WantHeaders: map[string]string{"X-WAF-Score": "5"}, WantSignals: []string{"sql-or", "sql-comment"}},
@@ -401,6 +424,10 @@ func stageScenarios(stage int) []scenario {
 		return append(scenarios, whitespace)
 	case 6:
 		scenarios := []scenario{
+			// The standalone heuristic cutoff wins when both score cutoffs fire.
+			{Name: "standalone heuristic cutoff precedes ML", Policy: policy(normPolicy, heuristics, classifier), Score: 70, Probes: []probe{
+				{Target: "/search?q=or+1%3D1+--", Status: 403, Rule: "heuristic_score", WantHeaders: map[string]string{"X-WAF-Score": "5", "X-WAF-ML-Score": "70", "X-WAF-Detector-Status": "ok"}, WantSignals: []string{"sql-or", "sql-comment"}},
+			}},
 			// An origin error is not an input-validation error and still uses detection.
 			{Name: "origin errors retain detector diagnostics", Policy: policy(classifier), OriginStatus: 400, Probes: []probe{
 				{Target: "/bad", Status: 400, Forward: true, WantHeaders: map[string]string{"X-WAF-ML-Score": "0", "X-WAF-Detector-Status": "ok"}},
@@ -595,7 +622,11 @@ func stageScenarios(stage int) []scenario {
 			},
 		}
 	case 8:
-		return []scenario{
+		scenarios := []scenario{
+			// Oversized malformed JSON is rejected by size before parsing or detection.
+			{Name: "request size precedes JSON validation", Policy: policy(`"inspection":{"max_body_bytes":4}`, classifier), Probes: []probe{
+				{Method: "POST", Target: "/echo", Body: `{"a":`, Headers: map[string]string{"Content-Type": "application/json"}, Status: 413, Rule: "body_too_large"},
+			}},
 			// Duplicate names are invalid even when nested or written with JSON escapes.
 			{Name: "nested and escaped duplicate keys", Policy: policy(inspect, classifier), Probes: []probe{
 				invalidBody("application/json", `{"outer":{"a":1,"a":2}}`),
@@ -760,6 +791,22 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
+		// Log mode cannot bypass any of the body-validation failure classes.
+		for _, test := range append([]scenario(nil), scenarios...) {
+			logged := test
+			logged.Name = "log mode: " + test.Name
+			logged.Policy = `{"mode":"log",` + test.Policy[1:]
+			logged.Probes = nil
+			for _, check := range test.Probes {
+				if check.Rule == "invalid_request" || check.Rule == "body_too_large" || check.Rule == "unsupported_body" {
+					logged.Probes = append(logged.Probes, check)
+				}
+			}
+			if len(logged.Probes) > 0 {
+				scenarios = append(scenarios, logged)
+			}
+		}
+		return scenarios
 	case 9:
 		policyText := `{"mode":"log","response":{"max_bytes":128,"deny_patterns":["INTERNAL_KEY_[A-Z0-9]+"]}}`
 		scenarios := []scenario{
@@ -770,7 +817,7 @@ func stageScenarios(stage int) []scenario {
 			// A response exactly at the byte limit is still eligible for release.
 			{Name: "response byte limit is inclusive", Policy: `{"response":{"max_bytes":4,"deny_patterns":[]}}`, OriginBody: "\u00e9\u00e9", Probes: []probe{allow("/exact")}},
 			// Size rejection precedes pattern matching.
-			{Name: "response size precedes leak matching", Policy: `{"response":{"max_bytes":4,"deny_patterns":["secret"]}}`, OriginBody: "secret", Probes: []probe{
+			{Name: "response size precedes leak matching", Policy: `{"response":{"max_bytes":4,"deny_patterns":["sec"]}}`, OriginBody: "secret", Probes: []probe{
 				{Target: "/large", Status: 502, Rule: "response_too_large", Forward: true},
 			}},
 			// Separate decoded strings must not be joined into a protected marker.
@@ -1016,7 +1063,10 @@ func stageScenarios(stage int) []scenario {
 						Status: 403,
 						Rule:   "export-fields",
 					},
-					allow("/api/export/extra"),
+					// A last-value-wins JSON parser would incorrectly allow this duplicate key.
+					{Method: "POST", Target: "/api/export", Body: `{"fields":["password_hash"],"fields":["name"]}`, Status: 403, Rule: "export-fields"},
+					// The method matches, so only exact path matching can exempt this request.
+					{Method: "POST", Target: "/api/export/extra", Body: `{"fields":["password_hash"]}`, Status: 200, Forward: true},
 				},
 			},
 

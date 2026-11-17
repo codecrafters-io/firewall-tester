@@ -21,6 +21,7 @@ type probe struct {
 	WantBody             string
 	Traffic              string
 	Headers              map[string]string
+	HeaderValues         map[string][]string
 	Status               int
 	Rule                 string
 	Forward              bool
@@ -45,6 +46,19 @@ type scenario struct {
 	OriginBody      string
 	OriginSlowTail  bool
 	OriginTruncated bool
+}
+
+// Error bodies contain only the rule identifier, with arbitrary JSON whitespace.
+func validErrorBody(body []byte, rule string) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	for _, expected := range []any{json.Delim('{'), "error", json.Delim('{'), "rule", rule, json.Delim('}'), json.Delim('}')} {
+		actual, err := decoder.Token()
+		if err != nil || actual != expected {
+			return false
+		}
+	}
+	_, err := decoder.Token()
+	return err == io.EOF
 }
 
 func verify(stage int, launch launchFunc, log func(string, ...any)) error {
@@ -120,6 +134,11 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		lock.Lock()
 		detectorInputs = append(detectorInputs, value.Inputs)
 		lock.Unlock()
+		// A followed redirect must not look like a harmless detector failure.
+		if test.DetectorMode == "redirect" && r.URL.Path == "/second" {
+			io.WriteString(w, `{"score":100}`)
+			return
+		}
 		if r.Method != "POST" || r.URL.Path != "/classify" || r.Header.Get("Authorization") != "" || r.Header.Get("Content-Type") != "application/json" {
 			w.WriteHeader(400)
 			return
@@ -216,6 +235,9 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			for key, value := range check.Headers {
 				baseline.Header.Set(key, value)
 			}
+			for key, values := range check.HeaderValues {
+				baseline.Header[key] = append([]string(nil), values...)
+			}
 			direct, err := client.Do(baseline)
 			if err != nil {
 				return fmt.Errorf("application baseline: %w", err)
@@ -262,6 +284,9 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		for key, value := range check.Headers {
 			request.Header.Set(key, value)
 		}
+		for key, values := range check.HeaderValues {
+			request.Header[key] = append([]string(nil), values...)
+		}
 		log("Request: %s %s, headers: %v, body: %q", method, target, request.Header, check.Body)
 		started := time.Now()
 		response, err := client.Do(request)
@@ -291,13 +316,8 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			if bytes.Contains(body, []byte("INTERNAL_KEY_7F2A")) || bytes.Contains(body, []byte("password_hash")) {
 				return fmt.Errorf("protected input or origin data echoed in denial")
 			}
-			var result struct {
-				Error struct {
-					Rule string `json:"rule"`
-				} `json:"error"`
-			}
-			if json.Unmarshal(body, &result) != nil || result.Error.Rule != check.Rule {
-				return fmt.Errorf("expected JSON error.rule %q, got %s", check.Rule, body)
+			if !validErrorBody(body, check.Rule) {
+				return fmt.Errorf("expected JSON body containing only error.rule %q, got %s", check.Rule, body)
 			}
 			if actual := response.Header.Get("Content-Type"); actual != "application/json" {
 				return fmt.Errorf("denial response header Content-Type: expected %q, got %q", "application/json", actual)
@@ -410,9 +430,9 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			if contentType := check.Headers["Content-Type"]; contentType != "" && last.Header.Get("Content-Type") != contentType {
 				return fmt.Errorf("request Content-Type changed: %q", last.Header.Get("Content-Type"))
 			}
-			for _, name := range []string{"X-WAF-Match", "X-WAF-Injected", "X-Client-Hop"} {
-				if last.Header.Get(name) != "" {
-					return fmt.Errorf("forwarded request header %s: expected absent, got %q", name, last.Header.Values(name))
+			for name := range last.Header {
+				if strings.HasPrefix(strings.ToLower(name), "x-waf-") || name == "X-Client-Hop" {
+					return fmt.Errorf("forwarded request header %s: expected absent, got %q", strings.Replace(name, "X-Waf-", "X-WAF-", 1), last.Header.Values(name))
 				}
 			}
 		}

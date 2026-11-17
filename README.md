@@ -24,9 +24,7 @@ Each new stage is checked against its corresponding Go and Python reference. The
 
 The main exercises use a tester-managed customer application and an embedded frozen classifier. Output compares direct application responses with firewall responses, diagnostics, and observed origin request counts. The final replay includes successful defenses, an unblocked detection probe, and a known false positive. Additional scripted detector responses check integration boundaries and failure behavior. Training source, held-out examples, and the reproducible model evaluation are maintained under `model_development` in the course repository; tests verify the embedded weights and scores match.
 
-## Migration status
-
-The previous AI gateway grader and fixtures remain under `internal` to preserve the existing uncommitted work during this conversion. They are historical and are not selected by the active tester entry point or `make test`. Their former stage Make targets have been removed. Cleanup of those files can follow the coordinated migration commit.
+## Release compatibility
 
 The integrated application exercises require the coordinated v4 tester release. Earlier releases can grade older stage orders and do not include the visible coursework replay. Publish the matching tester before applying the updated hosted course.
 

@@ -1,6 +1,0 @@
-[33m[tester::#FI6] [0m[94mRunning tests for Stage #FI6 (fi6)[0m
-[33m[tester::#FI6] [0m[94mWrote /tmp/firewall-stage-1-459674118/policy.json: {}[0m
-[33m[tester::#FI6] [0m[94m$ ./your_program.sh --origin http://127.0.0.1:8081 --detector http://127.0.0.1:8082 --policy "/tmp/firewall-stage-1-459674118/policy.json"[0m
-[33m[tester::#FI6] [0m[94mSending GET /health to port 8080 (request 1/2)[0m
-[33m[tester::#FI6] [0m[91mexpected GET /health to return HTTP 200, got HTTP 404[0m
-[33m[tester::#FI6] [0m[91mTest failed[0m

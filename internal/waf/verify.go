@@ -43,6 +43,7 @@ type scenario struct {
 	DetectorMode    string
 	OriginStatus    int
 	OriginBody      string
+	OriginSlowTail  bool
 	OriginTruncated bool
 }
 
@@ -91,7 +92,20 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		if test.OriginTruncated {
 			length += 100
 		}
-		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nX-WAF-Match: forged-origin\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n\r\n%s", status, http.StatusText(status), length, bodyText)
+		if test.OriginSlowTail {
+			fmt.Fprintf(writer, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n12345")
+			writer.Flush()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
+			}
+			return
+		}
+		location := ""
+		if status == http.StatusFound {
+			location = "Location: /redirect-target\r\n"
+		}
+		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nX-WAF-Match: forged-origin\r\nx-WaF-Injected: forged-origin\r\nSet-Cookie: first=1\r\nSet-Cookie: second=2\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n%s\r\n%s", status, http.StatusText(status), length, location, bodyText)
 		writer.Flush()
 	}))
 	defer origin.Close()
@@ -240,11 +254,15 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		}
 		request.Header.Set("Authorization", "Bearer course-test-key")
 		request.Header.Set("X-WAF-Match", "forged-client")
+		request.Header.Set("X-WAF-Injected", "forged-client")
+		request.Header.Add("X-Client-Tag", "first")
+		request.Header.Add("X-Client-Tag", "second")
 		request.Header.Set("Connection", "X-Client-Hop")
 		request.Header.Set("X-Client-Hop", "remove-me")
 		for key, value := range check.Headers {
 			request.Header.Set(key, value)
 		}
+		log("Request: %s %s, headers: %v, body: %q", method, target, request.Header, check.Body)
 		started := time.Now()
 		response, err := client.Do(request)
 		if err != nil {
@@ -281,8 +299,11 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			if json.Unmarshal(body, &result) != nil || result.Error.Rule != check.Rule {
 				return fmt.Errorf("expected JSON error.rule %q, got %s", check.Rule, body)
 			}
-			if response.Header.Get("Content-Type") != "application/json" || response.Header.Get("X-WAF-Match") != check.Rule || len(response.Header.Values("X-WAF-Match")) != 1 {
-				return fmt.Errorf("missing denial headers: %v", response.Header)
+			if actual := response.Header.Get("Content-Type"); actual != "application/json" {
+				return fmt.Errorf("denial response header Content-Type: expected %q, got %q", "application/json", actual)
+			}
+			if actual := response.Header.Values("X-WAF-Match"); !slices.Equal(actual, []string{check.Rule}) {
+				return fmt.Errorf("denial response header X-WAF-Match: expected exactly one value %q, got %q", check.Rule, actual)
 			}
 			if response.Header.Get("X-Request-Id") != "" {
 				return fmt.Errorf("origin header escaped in denial")
@@ -299,8 +320,19 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			if test.Coursework {
 				requestID = "course-origin"
 			}
-			if !bytes.Equal(body, []byte(expected)) || response.Header.Get("X-Request-Id") != requestID {
-				return fmt.Errorf("origin body or request ID changed: %s", body)
+			if !bytes.Equal(body, []byte(expected)) {
+				return fmt.Errorf("origin response body: expected %q, got %q", expected, body)
+			}
+			if actual := response.Header.Get("X-Request-Id"); actual != requestID {
+				return fmt.Errorf("origin response header X-Request-Id: expected %q, got %q", requestID, actual)
+			}
+			if !test.Coursework {
+				if response.Header.Get("Content-Type") != "application/json" || !slices.Equal(response.Header.Values("Set-Cookie"), []string{"first=1", "second=2"}) {
+					return fmt.Errorf("origin end-to-end headers changed: %v", response.Header)
+				}
+			}
+			if response.Header.Get("X-WAF-Injected") != "" {
+				return fmt.Errorf("reserved origin header escaped: %v", response.Header)
 			}
 			if response.Header.Get("X-Origin-Hop") != "" || response.Header.Get("X-Second-Hop") != "" {
 				return fmt.Errorf("hop header escaped: %v", response.Header)
@@ -313,6 +345,9 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		}
 		if check.WantSignals != nil {
 			actual := strings.Split(response.Header.Get("X-WAF-Signals"), ",")
+			for i := range actual {
+				actual[i] = strings.TrimSpace(actual[i])
+			}
 			wanted := append([]string(nil), check.WantSignals...)
 			sort.Strings(actual)
 			sort.Strings(wanted)
@@ -350,14 +385,35 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			return fmt.Errorf("expected %d origin requests, got %d", expectedCount, count)
 		}
 		if last != nil {
-			if last.Method != method || last.URL.RequestURI() != target || string(lastBody) != check.Body {
-				return fmt.Errorf("forwarded request changed")
+			if last.Method != method {
+				return fmt.Errorf("forwarded request method: expected %q, got %q", method, last.Method)
 			}
-			if last.Host != strings.TrimPrefix(origin.URL, "http://") || last.Header.Get("Authorization") != "Bearer course-test-key" {
-				return fmt.Errorf("upstream host or authentication changed")
+			if actual := last.URL.RequestURI(); actual != target {
+				return fmt.Errorf("forwarded request target: expected %q, got %q", target, actual)
 			}
-			if last.Header.Get("X-WAF-Match") != "" || last.Header.Get("X-Client-Hop") != "" {
-				return fmt.Errorf("reserved or hop header forwarded")
+			if string(lastBody) != check.Body {
+				return fmt.Errorf("forwarded request body: expected %q, got %q", check.Body, lastBody)
+			}
+			if expected := strings.TrimPrefix(origin.URL, "http://"); last.Host != expected {
+				return fmt.Errorf("forwarded request Host: expected %q, got %q", expected, last.Host)
+			}
+			if actual := last.Header.Get("Authorization"); actual != "Bearer course-test-key" {
+				return fmt.Errorf("forwarded request header Authorization: expected %q, got %q", "Bearer course-test-key", actual)
+			}
+			tags := strings.Split(strings.Join(last.Header.Values("X-Client-Tag"), ","), ",")
+			for i := range tags {
+				tags[i] = strings.TrimSpace(tags[i])
+			}
+			if !slices.Equal(tags, request.Header.Values("X-Client-Tag")) {
+				return fmt.Errorf("repeated end-to-end request headers changed: %v", last.Header.Values("X-Client-Tag"))
+			}
+			if contentType := check.Headers["Content-Type"]; contentType != "" && last.Header.Get("Content-Type") != contentType {
+				return fmt.Errorf("request Content-Type changed: %q", last.Header.Get("Content-Type"))
+			}
+			for _, name := range []string{"X-WAF-Match", "X-WAF-Injected", "X-Client-Hop"} {
+				if last.Header.Get(name) != "" {
+					return fmt.Errorf("forwarded request header %s: expected absent, got %q", name, last.Header.Values(name))
+				}
 			}
 		}
 		if check.Inputs != nil {
@@ -393,8 +449,13 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 
 		var policy map[string]json.RawMessage
 		json.Unmarshal([]byte(test.Policy), &policy)
-		if (policy["classifier"] == nil || target == "/health" || check.Status == 400 || check.Status == 413 || check.Status == 415) && len(newInputs) > 0 {
-			return fmt.Errorf("detector called without classifier policy")
+		validationFailure := check.Status == 400 && !check.Forward || check.Rule == "body_too_large" || check.Rule == "unsupported_body"
+		expectedCalls := 0
+		if policy["classifier"] != nil && target != "/health" && !validationFailure {
+			expectedCalls = 1
+		}
+		if len(newInputs) != expectedCalls {
+			return fmt.Errorf("expected %d detector calls, got %d", expectedCalls, len(newInputs))
 		}
 	}
 	if len(replayCounts) != 0 {

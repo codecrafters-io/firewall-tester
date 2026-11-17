@@ -90,16 +90,18 @@ func TestPreviousStageFails(t *testing.T) {
 		root = "../../../build-your-own-firewall"
 	}
 	root, _ = filepath.Abs(root)
-	for i := 1; i < len(slugs); i++ {
-		t.Run(fmt.Sprintf("stage-%02d", i+1), func(t *testing.T) {
-			directory := filepath.Join(root, "solutions", "python", fmt.Sprintf("%02d-%s", i, slugs[i-1]), "code")
-			// Act
-			err := verify(i+1, referenceLaunch(t, directory), t.Logf)
-			// Assert
-			if err == nil {
-				t.Fatal("previous-stage implementation incorrectly passed")
-			}
-		})
+	for _, language := range []string{"go", "python"} {
+		for i := 1; i < len(slugs); i++ {
+			t.Run(fmt.Sprintf("%s/stage-%02d", language, i+1), func(t *testing.T) {
+				directory := filepath.Join(root, "solutions", language, fmt.Sprintf("%02d-%s", i, slugs[i-1]), "code")
+				// Act
+				err := verify(i+1, referenceLaunch(t, directory), t.Logf)
+				// Assert
+				if err == nil {
+					t.Fatal("previous-stage implementation incorrectly passed")
+				}
+			})
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package waf
 
 import (
+	"context"
 	"fmt"
 	testerutils "github.com/codecrafters-io/tester-utils"
 	"github.com/codecrafters-io/tester-utils/test_case_harness"
@@ -17,26 +18,48 @@ import (
 var slugs = []string{"fi6", "tf0", "kg7", "wt4", "ro3", "xd5", "si3", "qe5", "as4", "mu9"}
 
 func waitHealth(done <-chan struct{}) error {
-	client := &http.Client{Timeout: 200 * time.Millisecond, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		select {
+		case <-done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	var lastErr error = context.DeadlineExceeded
+	for ctx.Err() == nil {
 		select {
 		case <-done:
 			return fmt.Errorf("program exited before health checks completed")
 		default:
 		}
-		response, err := client.Get("http://127.0.0.1:8080/health")
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8080/health", nil)
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(request)
 		if err == nil {
 			response.Body.Close()
-			if response.StatusCode != 200 {
-				return fmt.Errorf("health returned HTTP %d", response.StatusCode)
+			if response.StatusCode != http.StatusOK {
+				return fmt.Errorf("GET /health: expected HTTP 200, got %d", response.StatusCode)
 			}
 			return nil
 		}
-		time.Sleep(25 * time.Millisecond)
+		lastErr = err
+		select {
+		case <-ctx.Done():
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
-	return fmt.Errorf("no healthy server on port 8080 within five seconds")
+	select {
+	case <-done:
+		return fmt.Errorf("program exited before health checks completed")
+	default:
+	}
+	return fmt.Errorf("GET /health on port 8080 did not return HTTP 200 within five seconds; last request failed: %w", lastErr)
 }
 
 func portAvailable() error {

@@ -11,7 +11,7 @@ import (
 
 const dummyHash = "DUMMY_PRIVATE_HASH"
 
-var simulatedTautology = regexp.MustCompile(`or\s+1\s*=\s*1`)
+var simulatedTautology = regexp.MustCompile(`or[ \t\n\f\r]+1[ \t\n\f\r]*=[ \t\n\f\r]*1`)
 
 // The exercise application deliberately exposes dummy data and unescaped HTML.
 func serveApplication(w http.ResponseWriter, r *http.Request) {

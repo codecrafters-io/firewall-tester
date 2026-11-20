@@ -3,41 +3,55 @@ name: Build your own Firewall
 short_name: Firewall
 release_status: alpha
 description_md: Build an inbound HTTP firewall that protects a web application. Start with a working reverse proxy, then add attack rules, evasion handling, machine-learning scores, and resource limits. Finish by virtually patching a vulnerable endpoint while keeping legitimate requests working.
-short_description_md: Learn HTTP proxying, attack detection, machine-learning integration, and security policy
+short_description_md: Stop web attacks without breaking legitimate traffic. Build a reverse proxy, add ML detection, and patch a vulnerable endpoint.
 completion_percentage: 5
 languages:
 - slug: go
   release_status: alpha
+  alpha_tester_usernames: ["Kaustav-Bose-Chowdhury", "aayush0325"]
 - slug: python
   release_status: alpha
+  alpha_tester_usernames: ["Kaustav-Bose-Chowdhury", "aayush0325"]
 marketing:
   difficulty: hard
   sample_extension_idea_title: Inspect streaming responses
   sample_extension_idea_description: Extend response inspection to streams without releasing protected content.
   frequently_asked_questions:
   - question_markdown: What exactly will I build?
-    answer_markdown: 'You''ll build a reverse proxy that sits between clients and a protected application:
-
+    answer_markdown: |-
+      You'll build a web application firewall: a reverse proxy that sits between clients and a protected application.
 
       `client -> your firewall -> application server`
 
+      Across eleven stages, you'll extend the same program with attack rules, input normalization, rule and ML scores, request-body inspection, and response checks that withhold protected data.
 
-      Your firewall inspects requests before forwarding them and checks responses before returning them to clients. It can block a request before the application processes it or withhold a response containing protected data.
+      In the final stage, you'll virtually patch a vulnerable export endpoint. Your firewall will block requests for private fields before they reach the application, while keeping legitimate public-field exports working.
+  - question_markdown: What exactly will I learn?
+    answer_markdown: |-
+      You'll learn how to:
 
+      * Forward HTTP requests and responses through a reverse proxy.
+      * Detect attack patterns in decoded inputs without changing the traffic you forward.
+      * Combine weighted rule signals and ML scores, then tune thresholds for each application route.
+      * Integrate a supplied pretrained detector with timeouts, result validation, and visible failure behavior.
+      * Inspect structured request bodies and complete responses within size limits.
+      * Write an endpoint-specific virtual patch for an application flaw that generic detectors can miss.
 
-      Across ten stages, you''ll extend the same program, keeping earlier behavior working as you add each capability.'
-  - question_markdown: Where does machine learning fit?
-    answer_markdown: 'A separate trusted detector scores HTTP inspection inputs. Your firewall calls it with a deadline, validates the result, combines its score with policy, and reports when detection is unavailable. The main exercises run a small pretrained classifier, while additional scripted detector replies test exact boundaries and failure behavior. No API key or model-training prerequisites are required.'
-  - question_markdown: What is the final challenge?
-    answer_markdown: 'An export endpoint accepts a list of record fields to return, but its vulnerable implementation also allows clients to request a private field. These requests can look harmless to generic rules and ML detection. You''ll add an endpoint-specific virtual patch that blocks private-field requests before they reach the application, while keeping legitimate public-field exports working.
+      You'll also see false positives and missed attacks, and test whether legitimate requests still work as you add each control.
+  - question_markdown: Why should I build such a project?
+    answer_markdown: |-
+      A request can look harmless to an attack detector and still expose private application data. An aggressive rule can stop an attack and also block a legitimate user. Building your own firewall makes these tradeoffs concrete.
 
+      You'll compare direct and protected application responses, see which requests reach the application, and investigate how rules, ML scores, and endpoint-specific checks affect the outcome. The final virtual patch shows how to protect a vulnerable endpoint without changing its application code.
 
-      The final stage combines this patch with your earlier controls: request inspection blocks disallowed input before the application processes it, while response inspection withholds responses containing protected data.'
-  - question_markdown: What do I need?
-    answer_markdown: 'Use Go or Python, with familiarity with HTTP, JSON, and Git. The tester starts the protected application and detector, supplies policies and dummy data, and shows direct-versus-protected responses throughout the exercises. You implement only the firewall. No separate application setup, model training, or paid service is needed.
+      This is a learning implementation with a defined HTTP subset. You'll explore where inspection helps and why the application still needs its own validation and authorization.
+  - question_markdown: What are the prerequisites for this challenge?
+    answer_markdown: |-
+      You should be comfortable writing Go or Python, working with HTTP and JSON, and using Git. No prior experience with web application firewalls or machine learning is required.
 
+      You implement only the firewall. The tester starts the protected application and a supplied pretrained detector, and provides policies and dummy data. No separate application setup, model training, API key, or paid service is needed.
 
-      This is a learning implementation with an explicit HTTP subset. It is not a production security guarantee. The lessons call out inspection limits, false positives, and the application''s continuing responsibility to validate and authorize requests.'
+      The stages explain the security concepts as you go, but you'll work out the implementation yourself.
   testimonials: []
 stages:
 - slug: fi6
@@ -48,6 +62,10 @@ stages:
   name: Proxy web requests
   difficulty: easy
   marketing_md: In this stage, you'll forward HTTP requests and responses between a client and the protected application.
+- slug: hs2
+  name: Clean up headers and fail safely
+  difficulty: medium
+  marketing_md: In this stage, you'll clean up proxy headers and return safe errors when the origin fails.
 - slug: kg7
   name: Block and log
   difficulty: easy

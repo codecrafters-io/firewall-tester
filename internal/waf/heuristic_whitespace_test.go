@@ -13,7 +13,7 @@ import (
 
 func portableWhitespaceScenario(t *testing.T) scenario {
 	t.Helper()
-	for _, test := range stageScenarios(5) {
+	for _, test := range stageScenarios(6) {
 		if test.Name == "heuristic whitespace is portable" {
 			return test
 		}

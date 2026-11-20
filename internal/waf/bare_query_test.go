@@ -68,7 +68,7 @@ const queryClassifierCode = `            if policy.get("classifier"):
 
 func queryInspectionLaunch(t *testing.T, inspectBare bool) launchFunc {
 	t.Helper()
-	source := filepath.Join(courseRoot(), "solutions", "python", "03-kg7", "code")
+	source := filepath.Join(courseRoot(), "solutions", "python", "04-kg7", "code")
 	target := t.TempDir()
 	if err := os.Mkdir(filepath.Join(target, "app"), 0700); err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func queryInspectionLaunch(t *testing.T, inspectBare bool) launchFunc {
 			oldInputs := `            inputs = [self.path, body.decode("utf-8", errors="replace")]`
 			origin := `            connection = http.client.HTTPConnection(origin.hostname, origin.port, timeout=3)`
 			if strings.Count(text, oldInputs) != 1 || strings.Count(text, origin) != 1 {
-				t.Fatal("stage 3 fixture insertion points changed")
+				t.Fatal("stage 4 fixture insertion points changed")
 			}
 			bare := "False"
 			if inspectBare {
@@ -104,7 +104,7 @@ func queryInspectionLaunch(t *testing.T, inspectBare bool) launchFunc {
 func bareQueryScenarios(t *testing.T) []scenario {
 	t.Helper()
 	var tests []scenario
-	for _, candidate := range append(stageScenarios(4), stageScenarios(6)...) {
+	for _, candidate := range append(stageScenarios(5), stageScenarios(7)...) {
 		switch candidate.Name {
 		case "bare query parameters are inspected independently",
 			"bare query log mode preserves forwarding",

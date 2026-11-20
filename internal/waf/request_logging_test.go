@@ -28,7 +28,7 @@ func fixedStatusLaunch(status int) launchFunc {
 func TestFailedBodyValidationLogsRequest(t *testing.T) {
 	// Arrange
 	var test scenario
-	for _, candidate := range stageScenarios(8) {
+	for _, candidate := range stageScenarios(9) {
 		if candidate.Name == "uninspectable input never reaches detector or origin" {
 			test = candidate
 			break
@@ -68,7 +68,7 @@ func TestFailedBodyValidationLogsRequest(t *testing.T) {
 func TestFailedHeaderNormalizationLogsRequest(t *testing.T) {
 	// Arrange
 	var test scenario
-	for _, candidate := range stageScenarios(4) {
+	for _, candidate := range stageScenarios(5) {
 		if candidate.Name == "decoded inputs and one-layer boundary" {
 			test = candidate
 			break

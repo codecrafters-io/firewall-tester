@@ -52,9 +52,11 @@ func courseworkScenarios(stage int) []scenario {
 		article := articleRequest()
 		article.Body = "My first article"
 		article.WantBody = `{"article":"My first article","published":true}`
-		return []scenario{{Name: "Exercise: proxy a product search and publish an article", Coursework: true,
+		return []scenario{{Name: "Exercise: proxy a product search and publish an article", Coursework: true, BasicProxy: true,
 			Policy: "{}", Probes: []probe{productSearch(), article}}}
 	case 3:
+		return nil
+	case 4:
 		logged := previewAttack()
 		logged.Status, logged.Rule, logged.Forward, logged.WantBody = 200, "", true, previewHTML
 		logged.WantHeaders = map[string]string{"X-WAF-Match": "xss-script", "Content-Type": "text/html; charset=utf-8"}
@@ -67,22 +69,22 @@ func courseworkScenarios(stage int) []scenario {
 						Headers:  map[string]string{"Content-Type": "text/plain"},
 						WantBody: "<!doctype html><title>Preview</title><div>Preview: Hello</div>"}}},
 		}
-	case 4:
+	case 5:
 		return []scenario{{Name: "Exercise: close the encoded search bypass", Coursework: true,
 			Policy: policy(normPolicy, rules), Probes: []probe{
 				deny("/search?q=union+select+password+from+users", "sql-union"), productSearch()}}}
-	case 5:
+	case 6:
 		attack := deny("/search?q=or+1%3D1+--", "heuristic_score")
 		attack.WantHeaders = map[string]string{"X-WAF-Score": "5"}
 		attack.WantSignals = []string{"sql-or", "sql-comment"}
 		return []scenario{{Name: "Exercise: combine two weak SQL signals", Coursework: true,
 			Policy: policy(normPolicy, rules, heuristics), Probes: []probe{attack, productSearch()}}}
-	case 6:
+	case 7:
 		attack := deny("/search?q=1%27+AND+SLEEP(5)%23", "ml_score")
 		attack.WantHeaders = map[string]string{"X-WAF-Score": "0", "X-WAF-ML-Score": "77", "X-WAF-Detector-Status": "ok"}
 		return []scenario{{Name: "Exercise: catch a new detection probe with real inference", Coursework: true,
 			Policy: policy(normPolicy, rules, heuristics, classifier), Probes: []probe{attack, productSearch()}}}
-	case 7:
+	case 8:
 		blocked := articleRequest()
 		blocked.Status, blocked.Rule, blocked.Forward, blocked.WantBody = 403, "heuristic_high", false, ""
 		withoutRoute := strings.Replace(decisions, `,"routes":[{"path":"/articles","ml_high":95,"ml_medium":80,"heuristic_high":8,"heuristic_medium":5}]`, "", 1)
@@ -94,17 +96,17 @@ func courseworkScenarios(stage int) []scenario {
 			{Name: "Exercise: publish the article with route thresholds", Coursework: true,
 				Policy: policy(base...), Probes: []probe{allowed, productSearch()}},
 		}
-	case 8:
+	case 9:
 		return []scenario{{Name: "Exercise: inspect JSON before it becomes HTML", Coursework: true,
 			Policy: policy(append(base, bodyInspection)...), Probes: []probe{structuredPreview(),
 				{Method: "POST", Target: "/preview", Body: `{"comment":"Hello"}`, Status: 200, Forward: true,
 					Headers:  map[string]string{"Content-Type": "application/json"},
 					WantBody: "<!doctype html><title>Preview</title><div>Preview: Hello</div>"}}}}
-	case 9:
+	case 10:
 		return []scenario{{Name: "Exercise: withhold the application's debug secret", Coursework: true,
 			Policy: policy(append(base, bodyInspection, responseInspection)...), Probes: []probe{
 				{Target: "/debug", Status: 403, Rule: "response_leak", Forward: true}, productSearch()}}}
-	case 10:
+	case 11:
 		attack := previewAttack()
 		encoded := deny("/search?q=union+select+password+from+users", "sql-union")
 		heuristic := deny("/search?q=or+1%3D1+--", "heuristic_high")

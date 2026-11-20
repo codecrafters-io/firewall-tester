@@ -15,7 +15,7 @@ import (
 func referenceDirectory(t *testing.T, language string, stage int) string {
 	t.Helper()
 	base := filepath.Join("testdata", "references")
-	if stage <= 3 {
+	if stage <= 4 {
 		base = filepath.Join(courseRoot(), "solutions")
 	}
 	directory, err := filepath.Abs(filepath.Join(base, language, fmt.Sprintf("%02d-%s", stage, slugs[stage-1]), "code"))

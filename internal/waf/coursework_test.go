@@ -65,7 +65,7 @@ func TestApplicationPublicExport(t *testing.T) {
 	}
 }
 
-// The model produces the measured Stage 6 inference score.
+// The model produces the measured Stage 7 inference score.
 func TestExerciseModelProbeScore(t *testing.T) {
 	// Arrange
 	inputs := []string{"/search", "1' and sleep(5)#", ""}
@@ -77,7 +77,7 @@ func TestExerciseModelProbeScore(t *testing.T) {
 	}
 }
 
-// The pre-parsing body stays below the combined cutoff in the Stage 8 exercise.
+// The pre-parsing body stays below the combined cutoff in the Stage 9 exercise.
 func TestExerciseModelEscapedBodyScore(t *testing.T) {
 	// Arrange
 	inputs := []string{"/preview", escapedPreview}
@@ -138,11 +138,11 @@ func TestExerciseModelHeldoutParity(t *testing.T) {
 // The finale visibly distinguishes withheld responses, probes, and false positives.
 func TestCourseworkReplayOutput(t *testing.T) {
 	// Arrange
-	directory := referenceDirectory(t, "python", 10)
+	directory := referenceDirectory(t, "python", 11)
 	var output strings.Builder
 	log := func(format string, args ...any) { fmt.Fprintf(&output, format+"\n", args...) }
 	// Act
-	err := runScenario(courseworkScenarios(10)[0], referenceLaunch(t, directory), log)
+	err := runScenario(courseworkScenarios(11)[0], referenceLaunch(t, directory), log)
 	// Assert
 	if err != nil {
 		t.Fatal(err, output.String())

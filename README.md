@@ -18,7 +18,7 @@ make test
 make build
 ```
 
-Each new stage is checked against its corresponding Go and Python reference. Stages 1-3 use the course solutions. Stages 4-10 use the cumulative WAF fixtures in `internal/waf/testdata/references`, since the course publishes solutions only through stage 3. The preceding reference in each language must fail the next stage's new control. The final stage repeats the earlier contract cases in addition to checking the virtual patch.
+Each new stage is checked against its corresponding Go and Python reference. Stages 1-4 use the course solutions. Stages 5-11 use the cumulative WAF fixtures in `internal/waf/testdata/references`, since the course publishes solutions only through stage 4. The preceding reference in each language must fail the next stage's new control. The final stage repeats the earlier contract cases in addition to checking the virtual patch.
 
 `test.sh` and `cmd/tester` use the new WAF grader. It observes original request bytes, origin request counts, response status/body/headers, detector calls, timeout fallback, body-validation failures, spoofed diagnostics, route decisions, response leaks, and private-field export patches. No model-proposed tools are executed.
 
@@ -26,7 +26,7 @@ The main exercises use a tester-managed customer application and an embedded fro
 
 ## Release compatibility
 
-The integrated application exercises require the coordinated v4 tester release. Earlier releases can grade older stage orders and do not include the visible coursework replay. Publish the matching tester before applying the updated hosted course.
+The eleven-stage course adds `hs2` after basic proxying (`tf0`). Header cleanup and safe origin failures begin at `hs2`; later stage IDs keep their meaning and move up one position. Earlier releases use older stage orders. Publish the matching tester before applying the updated hosted course.
 
 ## Release verification
 

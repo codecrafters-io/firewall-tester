@@ -95,28 +95,7 @@ func stageScenarios(stage int) []scenario {
 				},
 			})
 		}
-		// An incomplete origin response becomes a safe gateway error.
-		scenarios = append(scenarios, scenario{
-			Name:   "incomplete origin response returns a gateway error",
-			Policy: "{}", OriginTruncated: true,
-			Probes: []probe{
-				{Target: "/truncated", Status: 502, Rule: "origin_unavailable", Forward: true},
-			},
-		})
-		return append(scenarios, []scenario{
-
-			{
-				Name:    "unavailable origin returns a gateway error",
-				Policy:  "{}",
-				Offline: true,
-				Probes: []probe{
-					{
-						Target: "/products",
-						Status: 502,
-						Rule:   "origin_unavailable",
-					},
-				},
-			},
+		scenarios = append(scenarios, []scenario{
 
 			{
 				Name:   "transparent web proxy",
@@ -165,7 +144,23 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}...)
+		for index := range scenarios {
+			scenarios[index].BasicProxy = true
+		}
+		return scenarios
 	case 3:
+		scenarios := stageScenarios(2)
+		for index := range scenarios {
+			scenarios[index].BasicProxy = false
+		}
+		// An incomplete origin response becomes a safe gateway error.
+		return append([]scenario{
+			{Name: "incomplete origin response returns a gateway error", Policy: "{}", OriginTruncated: true,
+				Probes: []probe{{Target: "/truncated", Status: 502, Rule: "origin_unavailable", Forward: true}}},
+			{Name: "unavailable origin returns a gateway error", Policy: "{}", Offline: true,
+				Probes: []probe{{Target: "/products", Status: 502, Rule: "origin_unavailable"}, {Target: "/health", Status: 200}}},
+		}, scenarios...)
+	case 4:
 		return []scenario{
 			// Denylist terms are literal even when they contain regex metacharacters.
 			{Name: "denylist terms are literal substrings", Policy: policy(`"denylist":[{"id":"literal-dot","term":"a.b"}]`), Probes: []probe{
@@ -220,7 +215,7 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
-	case 4:
+	case 5:
 		return []scenario{
 			// A configured header value retains its comma during literal matching.
 			{Name: "header values are not comma split", Policy: policy(normPolicy, `"denylist":[{"id":"comma","term":"union, select"}]`), Probes: []probe{
@@ -320,7 +315,7 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
-	case 5:
+	case 6:
 		scenarios := []scenario{
 			// A regex cannot match by spanning independently inspected query values.
 			{Name: "heuristic patterns keep input boundaries", Policy: policy(normPolicy, `"heuristics":{"threshold":1,"signals":[{"id":"boundary","pattern":"left(.|\\n)*right","weight":1}]}`), Probes: []probe{
@@ -422,7 +417,7 @@ func stageScenarios(stage int) []scenario {
 			whitespace.Probes = append(whitespace.Probes, clean, combined)
 		}
 		return append(scenarios, whitespace)
-	case 6:
+	case 7:
 		scenarios := []scenario{
 			// The standalone heuristic cutoff wins when both score cutoffs fire.
 			{Name: "standalone heuristic cutoff precedes ML", Policy: policy(normPolicy, heuristics, classifier), Score: 70, Probes: []probe{
@@ -555,7 +550,7 @@ func stageScenarios(stage int) []scenario {
 				deny("/search?q=or+1%3D1+--", "heuristic_score"),
 			},
 		})
-	case 7:
+	case 8:
 		return []scenario{
 			// Outage fallback uses the standalone cutoff even on a tuned route.
 			{Name: "route outage restores standalone heuristics", Policy: policy(normPolicy, heuristics, classifier, decisions), DetectorMode: "error", Probes: []probe{
@@ -621,7 +616,7 @@ func stageScenarios(stage int) []scenario {
 				},
 			},
 		}
-	case 8:
+	case 9:
 		scenarios := []scenario{
 			// Oversized malformed JSON is rejected by size before parsing or detection.
 			{Name: "request size precedes JSON validation", Policy: policy(`"inspection":{"max_body_bytes":4}`, classifier), Probes: []probe{
@@ -807,7 +802,7 @@ func stageScenarios(stage int) []scenario {
 			}
 		}
 		return scenarios
-	case 9:
+	case 10:
 		policyText := `{"mode":"log","response":{"max_bytes":128,"deny_patterns":["INTERNAL_KEY_[A-Z0-9]+"]}}`
 		scenarios := []scenario{
 			// Inspection stops after max_bytes + 1 bytes without waiting for the tail.
@@ -948,7 +943,7 @@ func stageScenarios(stage int) []scenario {
 			})
 		}
 		return scenarios
-	case 10:
+	case 11:
 		finale := []scenario{
 			// Every matching patch must pass and the first failing patch names the denial.
 			{Name: "all matching patches enforce policy order", Policy: `{"virtual_patches":[{"id":"first","method":"POST","path":"/report","argument":"fields","allowed_values":["name"]},{"id":"second","method":"POST","path":"/report","argument":"columns","allowed_values":["public"]}]}`, Probes: []probe{

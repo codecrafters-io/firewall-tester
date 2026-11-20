@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var slugs = []string{"fi6", "tf0", "kg7", "wt4", "ro3", "xd5", "si3", "qe5", "as4", "mu9"}
+var slugs = []string{"fi6", "tf0", "hs2", "kg7", "wt4", "ro3", "xd5", "si3", "qe5", "as4", "mu9"}
 
 func waitHealth(done <-chan struct{}) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

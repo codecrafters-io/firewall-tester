@@ -35,6 +35,8 @@ type probe struct {
 	Inputs      []string
 }
 type scenario struct {
+	// BasicProxy defers header cleanup until the safe-proxy stage.
+	BasicProxy      bool
 	Coursework      bool
 	Offline         bool
 	Name            string
@@ -119,7 +121,11 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 		if status == http.StatusFound {
 			location = "Location: /redirect-target\r\n"
 		}
-		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nX-WAF-Match: forged-origin\r\nx-WaF-Injected: forged-origin\r\nSet-Cookie: first=1\r\nSet-Cookie: second=2\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n%s\r\n%s", status, http.StatusText(status), length, location, bodyText)
+		cleanupHeaders := ""
+		if !test.BasicProxy {
+			cleanupHeaders = "X-WAF-Match: forged-origin\r\nx-WaF-Injected: forged-origin\r\nConnection: X-Origin-Hop\r\nConnection: X-Second-Hop\r\nX-Second-Hop: remove-too\r\nX-Origin-Hop: remove-me\r\n"
+		}
+		fmt.Fprintf(writer, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nX-Request-Id: origin-7\r\nSet-Cookie: first=1\r\nSet-Cookie: second=2\r\n%s%s\r\n%s", status, http.StatusText(status), length, cleanupHeaders, location, bodyText)
 		writer.Flush()
 	}))
 	defer origin.Close()
@@ -275,12 +281,16 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			request.URL.Opaque = target
 		}
 		request.Header.Set("Authorization", "Bearer course-test-key")
-		request.Header.Set("X-WAF-Match", "forged-client")
-		request.Header.Set("X-WAF-Injected", "forged-client")
+		if !test.BasicProxy {
+			request.Header.Set("X-WAF-Match", "forged-client")
+			request.Header.Set("X-WAF-Injected", "forged-client")
+		}
 		request.Header.Add("X-Client-Tag", "first")
 		request.Header.Add("X-Client-Tag", "second")
-		request.Header.Set("Connection", "X-Client-Hop")
-		request.Header.Set("X-Client-Hop", "remove-me")
+		if !test.BasicProxy {
+			request.Header.Set("Connection", "X-Client-Hop")
+			request.Header.Set("X-Client-Hop", "remove-me")
+		}
 		for key, value := range check.Headers {
 			request.Header.Set(key, value)
 		}
@@ -351,11 +361,13 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 					return fmt.Errorf("origin end-to-end headers changed: %v", response.Header)
 				}
 			}
-			if response.Header.Get("X-WAF-Injected") != "" {
-				return fmt.Errorf("reserved origin header escaped: %v", response.Header)
-			}
-			if response.Header.Get("X-Origin-Hop") != "" || response.Header.Get("X-Second-Hop") != "" {
-				return fmt.Errorf("hop header escaped: %v", response.Header)
+			if !test.BasicProxy {
+				if response.Header.Get("X-WAF-Injected") != "" {
+					return fmt.Errorf("reserved origin header escaped: %v", response.Header)
+				}
+				if response.Header.Get("X-Origin-Hop") != "" || response.Header.Get("X-Second-Hop") != "" {
+					return fmt.Errorf("hop header escaped: %v", response.Header)
+				}
 			}
 		}
 		for key, value := range check.WantHeaders {
@@ -430,9 +442,11 @@ func runScenario(test scenario, launch launchFunc, log func(string, ...any)) err
 			if contentType := check.Headers["Content-Type"]; contentType != "" && last.Header.Get("Content-Type") != contentType {
 				return fmt.Errorf("request Content-Type changed: %q", last.Header.Get("Content-Type"))
 			}
-			for name := range last.Header {
-				if strings.HasPrefix(strings.ToLower(name), "x-waf-") || name == "X-Client-Hop" {
-					return fmt.Errorf("forwarded request header %s: expected absent, got %q", strings.Replace(name, "X-Waf-", "X-WAF-", 1), last.Header.Values(name))
+			if !test.BasicProxy {
+				for name := range last.Header {
+					if strings.HasPrefix(strings.ToLower(name), "x-waf-") || name == "X-Client-Hop" {
+						return fmt.Errorf("forwarded request header %s: expected absent, got %q", strings.Replace(name, "X-Waf-", "X-WAF-", 1), last.Header.Values(name))
+					}
 				}
 			}
 		}
